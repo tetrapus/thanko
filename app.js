@@ -39,6 +39,10 @@ modeBtns.forEach(btn => {
             if (!bluetoothDevice.name.startsWith(activePrefix)) onDisconnected();
         }
         updatePreview();
+        // Show/hide label-only UI elements
+        const isLabel = currentMode === 'label';
+        document.getElementById('label-controls').style.display = isLabel ? 'flex' : 'none';
+        document.getElementById('label-emoji').style.display = isLabel ? 'block' : 'none';
     });
 });
 
@@ -52,22 +56,35 @@ previewDateToggle.addEventListener('change', () => updatePreview());
 
 const emojiBtn = document.getElementById('emoji-trigger-btn');
 const emojiContainer = document.getElementById('emoji-picker-container');
-const picker = document.querySelector('emoji-picker');
+const emojiClearBtn = document.getElementById('emoji-clear-btn');
+
+// Picker is loaded eagerly via <script type="module"> so it's ready immediately on open.
+// Wire up emoji-click once the custom element is defined.
+customElements.whenDefined('emoji-picker').then(() => {
+    const picker = emojiContainer.querySelector('emoji-picker');
+    picker.addEventListener('emoji-click', event => {
+        emojiInput.value = event.detail.unicode;
+        emojiBtn.textContent = event.detail.unicode;
+        emojiContainer.style.display = 'none';
+        updatePreview();
+    });
+});
 
 attachLongPress(emojiBtn,
-    () => { 
-        emojiContainer.style.display = emojiContainer.style.display === 'none' ? 'block' : 'none'; 
+    () => {
+        const isOpen = emojiContainer.style.display === 'flex';
+        emojiContainer.style.display = isOpen ? 'none' : 'flex';
     },
-    () => { 
-        emojiInput.value = ''; 
-        emojiBtn.innerHTML = '🍔'; 
-        updatePreview(); 
+    () => {
+        emojiInput.value = '';
+        emojiBtn.textContent = '◌';
+        updatePreview();
     }
 );
 
-picker.addEventListener('emoji-click', event => {
-    emojiInput.value = event.detail.unicode;
-    emojiBtn.innerHTML = event.detail.unicode;
+emojiClearBtn.addEventListener('click', () => {
+    emojiInput.value = '';
+    emojiBtn.textContent = '◌';
     emojiContainer.style.display = 'none';
     updatePreview();
 });
@@ -257,6 +274,97 @@ function drawTextInBounds(ctx, text, x, y, width, height) {
     }
 }
 
+// ─── Markdown canvas renderer ────────────────────────────────────────────────
+
+function parseInlineMarkdown(text) {
+    const segs = [];
+    let i = 0, bold = false, italic = false, cur = '';
+    while (i < text.length) {
+        if (text.slice(i, i + 2) === '**') {
+            if (cur) segs.push({ text: cur, bold, italic });
+            cur = ''; bold = !bold; i += 2;
+        } else if (text[i] === '*') {
+            if (cur) segs.push({ text: cur, bold, italic });
+            cur = ''; italic = !italic; i++;
+        } else { cur += text[i++]; }
+    }
+    if (cur) segs.push({ text: cur, bold, italic });
+    return segs.length ? segs : [{ text, bold: false, italic: false }];
+}
+
+function segFont(seg, blockBold, size) {
+    const b = seg.bold || blockBold;
+    return `${b ? 'bold ' : ''}${seg.italic ? 'italic ' : ''}${size}px Arial`;
+}
+
+function wrapInlineSegments(ctx, segs, maxW, size, blockBold) {
+    const lines = [[]];
+    let lineW = 0;
+    for (const seg of segs) {
+        const font = segFont(seg, blockBold, size);
+        ctx.font = font;
+        const parts = seg.text.split(/(\s+)/);
+        for (const part of parts) {
+            if (!part) continue;
+            const w = ctx.measureText(part).width;
+            const isSpace = /^\s+$/.test(part);
+            if (isSpace) {
+                if (lineW > 0) { lines[lines.length - 1].push({ text: part, font, w }); lineW += w; }
+            } else {
+                if (lineW + w > maxW && lineW > 0) {
+                    // Trim trailing spaces from last line
+                    const ll = lines[lines.length - 1];
+                    while (ll.length && /^\s+$/.test(ll[ll.length - 1].text)) ll.pop();
+                    lines.push([]); lineW = 0;
+                }
+                lines[lines.length - 1].push({ text: part, font, w });
+                lineW += w;
+            }
+        }
+        lineW = lines[lines.length - 1].reduce((s, t) => s + t.w, 0);
+    }
+    return lines;
+}
+
+// dryRun=true measures height without drawing, for binary-search scaling
+function drawMarkdown(ctx, text, x, y, maxW, maxH, baseSize, leftAlign, dryRun = false) {
+    const rawLines = text.split('\n');
+    let cy = y;
+
+    for (const raw of rawLines) {
+        if (cy >= y + maxH) break;
+
+        let size = baseSize, blockBold = false, content = raw, indent = 0;
+        if (/^### /.test(raw))      { size = Math.round(baseSize * 1.1); blockBold = true; content = raw.slice(4); }
+        else if (/^## /.test(raw))  { size = Math.round(baseSize * 1.35); blockBold = true; content = raw.slice(3); }
+        else if (/^# /.test(raw))   { size = Math.round(baseSize * 1.6); blockBold = true; content = raw.slice(2); }
+        else if (/^[*-] /.test(raw)){ content = '• ' + raw.slice(2); indent = Math.round(baseSize * 0.8); }
+        else if (!raw.trim())       { cy += Math.round(baseSize * 0.6); continue; }
+
+        const segs = parseInlineMarkdown(content);
+        const wrappedLines = wrapInlineSegments(ctx, segs, maxW - indent, size, blockBold);
+        const lh = Math.round(size * 1.4);
+
+        for (const wLine of wrappedLines) {
+            if (cy >= y + maxH) break;
+            if (!dryRun) {
+                ctx.textBaseline = 'top';
+                ctx.textAlign = 'left';
+                let cx = leftAlign ? x + indent : x + (maxW - wLine.reduce((s, t) => s + t.w, 0)) / 2;
+                for (const seg of wLine) {
+                    ctx.font = seg.font;
+                    ctx.fillText(seg.text, cx, cy);
+                    cx += seg.w;
+                }
+            }
+            cy += lh;
+        }
+    }
+    return cy - y;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function createPrintBuffer(textRaw, includeDate) {
     const emoji = emojiInput.value.trim();
     const dateStr = includeDate ? document.getElementById('date-label').textContent : null;
@@ -282,38 +390,10 @@ function createPrintBuffer(textRaw, includeDate) {
         logW = 384; logH = 384;
     }
     else {
-        // Printer (Variable Height)
-        ctx.font = `36px Arial`;
-        let linesP = [];
-        const rawLines = primaryText.split('\n');
-        let availW = 384 - (emoji ? 100 : 0);
-
-        for (let k = 0; k < rawLines.length; k++) {
-            if (!rawLines[k]) { linesP.push(""); continue; }
-            const words = rawLines[k].split(' ');
-            let cur = words[0] || '';
-            for (let i = 1; i < words.length; i++) {
-                if (ctx.measureText(cur + " " + words[i]).width < availW - 20) cur += " " + words[i];
-                else { linesP.push(cur); cur = words[i]; }
-            }
-            linesP.push(cur);
-        }
-
-        // Calculate auxiliary text height if any
-        let topH = 0;
-        if (topLeftText) {
-            ctx.font = '22px Arial';
-            const auxWords = topLeftText.split(' ');
-            let auxLines = 1; let cAux = auxWords[0] || '';
-            for (let i = 1; i < auxWords.length; i++) {
-                if (ctx.measureText(cAux + " " + auxWords[i]).width < availW - 20) cAux += " " + auxWords[i];
-                else { auxLines++; cAux = auxWords[i]; }
-            }
-            topH = (auxLines * 26) + 10;
-        }
-
-        canvasH = topH + (linesP.length * 45) + 30;
-        if (emoji && canvasH < 120) canvasH = 120;
+        // Printer (Variable Height) — markdown at h1-equivalent size, left-aligned, dynamic height
+        const PRINTER_FONT = 22; // = 14 * 1.6 (h1 scale factor)
+        const measuredH = drawMarkdown(ctx, primaryText || '', 0, 0, 374, 999999, PRINTER_FONT, true, true);
+        canvasH = Math.max(measuredH + 20, 40);
         canvasW = 384;
         logW = canvasW; logH = canvasH;
     }
@@ -358,8 +438,8 @@ function createPrintBuffer(textRaw, includeDate) {
 
     // Process Emoji on the left
     if (emoji) {
-        let ew = (currentMode === 'printer') ? 100 : rh;
-        ctx.font = `${Math.floor(ew * 0.8)}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+        let ew = (currentMode === 'printer') ? 100 : Math.floor(rh * 0.75);
+        ctx.font = `${Math.floor(ew * 0.9)}px 'Noto Emoji', sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(emoji, rx + ew / 2, ry + rh / 2); // Centered precisely inside its bounding box
@@ -386,26 +466,19 @@ function createPrintBuffer(textRaw, includeDate) {
     }
 
     if (currentMode === 'printer') {
-        ctx.font = `36px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        let cLines = [];
-        const cRaw = primaryText.split('\n');
-        for (let k = 0; k < cRaw.length; k++) {
-            if (!cRaw[k]) { cLines.push(""); continue; }
-            const words = cRaw[k].split(' ');
-            let cur = words[0] || '';
-            for (let i = 1; i < words.length; i++) {
-                if (ctx.measureText(cur + " " + words[i]).width < rw - 20) cur += " " + words[i];
-                else { cLines.push(cur); cur = words[i]; }
-            }
-            cLines.push(cur);
+        // Left-aligned markdown at h1-equivalent base size (22px), no side margins
+        drawMarkdown(ctx, primaryText || '', rx, ry + 5, rw, rh - 5, 22, true, false);
+    } else if (currentMode === 'sticker') {
+        // Binary-search base font size so content fills the sticker, then draw left-aligned
+        let lo = 8, hi = 60, bestSize = 14;
+        for (let iter = 0; iter < 10; iter++) {
+            const mid = Math.floor((lo + hi) / 2);
+            const h = drawMarkdown(ctx, primaryText || '', 0, 0, rw, rh * 100, mid, true, true);
+            if (h <= rh) { bestSize = mid; lo = mid + 1; } else { hi = mid - 1; }
         }
-        for (let i = 0; i < cLines.length; i++) {
-            ctx.fillText(cLines[i], rx + rw / 2, ry + (i * 45));
-        }
+        drawMarkdown(ctx, primaryText || '', rx, ry, rw, rh, bestSize, true, false);
     } else {
-        // Render Primary text inside the remaining box bounds
+        // Label mode — existing centered drawTextInBounds
         drawTextInBounds(ctx, primaryText, rx, ry, rw, rh);
     }
     ctx.restore();
