@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Multi-Mode Printer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>Mini Print</h1>
+            <div id="status-indicator" class="status-disconnected">Disconnected</div>
+        </header>
+
+        <div class="mode-tabs">
+            <button class="mode-btn active" data-mode="label">🏷️ Label</button>
+            <button class="mode-btn" data-mode="printer">🧾 Printer</button>
+            <button class="mode-btn" data-mode="sticker">🖼️ Sticker</button>
+        </div>
+
+        <main>
+            <div class="controls-row">
+                <button id="date-btn" class="control-btn tooltip-parent">
+                    🗓 <span id="date-label">Date</span>
+                </button>
+                <div class="controls-group">
+                    <button id="add-day-btn" class="control-btn square-btn tooltip-parent">+1</button>
+                    <button id="quantity-btn" class="control-btn square-btn tooltip-parent">x1</button>
+                </div>
+            </div>
+
+            <div class="input-panel">
+                <div class="emoji-wrapper" style="position: relative;">
+                    <input type="hidden" id="emoji-input" value="" />
+                    <button id="emoji-trigger-btn" class="control-btn" style="width: 50px; height: 50px; font-size: 24px; padding: 0; display: flex; align-items: center; justify-content: center;">🍔</button>
+                    
+                    <div id="emoji-picker-container" style="display: none; position: absolute; z-index: 999; top: 60px; left: 0; border: 2px solid #000; box-shadow: 4px 4px 0 #000; background: #fff;">
+                        <emoji-picker class="light"></emoji-picker>
+                    </div>
+                </div>
+                <textarea id="receipt-text" placeholder="Type your message here..." rows="6"></textarea>
+            </div>
+            
+            <button id="print-btn" class="primary-btn">
+                <span class="btn-text">Connect & Print</span>
+            </button>
+        </main>
+        
+        <div class="preview-section" style="margin-top: 15px; border-top: 2px dashed #000; padding-top: 15px; text-align: center;">
+            <h3 style="font-size: 13px; margin-bottom: 10px; color: #000; text-transform: uppercase; letter-spacing: 1px; font-weight: 800;">Hardware Bounds</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="font-size: 12px; color: #000; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="preview-date-toggle" style="width: 16px; height: 16px; accent-color: #000;"> Simulate Date Print
+                </label>
+            </div>
+            <div style="padding: 10px; border: 2px solid #000; background: #fff; display: inline-block;">
+                <canvas id="render-canvas"></canvas>
+            </div>
+            <div style="margin-top: 15px; font-size: 11px; color: #000; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; font-weight: 600;">
+                <span><span style="display:inline-block; width:10px; height:10px; background:rgba(0,0,0,0.15); border: 1px solid #000; margin-right:5px; vertical-align:middle;"></span> Leading Edge</span>
+                <span><span style="display:inline-block; width:10px; height:10px; background:rgba(0,0,0,0.05); border: 1px solid #000; margin-right:5px; vertical-align:middle;"></span> Printable</span>
+                <span><span style="display:inline-block; width:10px; height:10px; background:rgba(0,0,0,0.4); border: 1px solid #000; margin-right:5px; vertical-align:middle;"></span> Deadzone</span>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1/index.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
