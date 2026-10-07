@@ -15,9 +15,24 @@ const addDayBtn = document.getElementById('add-day-btn');
 const quantityBtn = document.getElementById('quantity-btn');
 const dateLabel = document.getElementById('date-label');
 const previewDateToggle = document.getElementById('preview-date-toggle');
+const imageControls = document.getElementById('image-controls');
+const imageUpload = document.getElementById('image-upload');
+const imageUploadBtn = document.getElementById('image-upload-btn');
+const imageName = document.getElementById('image-name');
+const imageClearBtn = document.getElementById('image-clear-btn');
+let selectedImage = null;
 
 const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
 const WRITE_CHAR_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
+const PRINTER_IMAGE_MAX_HEIGHT = 2000;
+
+function getPrinterImageSize(image, maxWidth) {
+    const scale = Math.min(1, maxWidth / image.width, PRINTER_IMAGE_MAX_HEIGHT / image.height);
+    return {
+        width: Math.max(1, Math.round(image.width * scale)),
+        height: Math.max(1, Math.round(image.height * scale))
+    };
+}
 
 let bluetoothDevice = null;
 let writeCharacteristic = null;
@@ -43,6 +58,7 @@ modeBtns.forEach(btn => {
         const isLabel = currentMode === 'label';
         document.getElementById('label-controls').style.display = isLabel ? 'flex' : 'none';
         document.getElementById('label-emoji').style.display = isLabel ? 'block' : 'none';
+        imageControls.style.display = currentMode === 'printer' ? 'flex' : 'none';
     });
 });
 
@@ -53,6 +69,38 @@ function updatePreview(dateTriggered = previewDateToggle.checked) {
 
 textArea.addEventListener('input', () => updatePreview());
 previewDateToggle.addEventListener('change', () => updatePreview());
+
+imageUploadBtn.addEventListener('click', () => imageUpload.click());
+imageUpload.addEventListener('change', () => {
+    const file = imageUpload.files && imageUpload.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+        imageUpload.value = '';
+        imageName.textContent = 'Please choose an image file';
+        return;
+    }
+    const image = new Image();
+    image.onload = () => {
+        selectedImage = image;
+        imageName.textContent = file.name;
+        imageClearBtn.style.display = 'inline-block';
+        updatePreview();
+        URL.revokeObjectURL(image.src);
+    };
+    image.onerror = () => {
+        imageUpload.value = '';
+        imageName.textContent = 'Could not load image';
+        URL.revokeObjectURL(image.src);
+    };
+    image.src = URL.createObjectURL(file);
+});
+imageClearBtn.addEventListener('click', () => {
+    selectedImage = null;
+    imageUpload.value = '';
+    imageName.textContent = 'No image selected';
+    imageClearBtn.style.display = 'none';
+    updatePreview();
+});
 
 const emojiBtn = document.getElementById('emoji-trigger-btn');
 const emojiContainer = document.getElementById('emoji-picker-container');
@@ -393,7 +441,8 @@ function createPrintBuffer(textRaw, includeDate) {
         // Printer (Variable Height) — markdown at h1-equivalent size, left-aligned, dynamic height
         const PRINTER_FONT = 22; // = 14 * 1.6 (h1 scale factor)
         const measuredH = drawMarkdown(ctx, primaryText || '', 0, 0, 374, 999999, PRINTER_FONT, true, true);
-        canvasH = Math.max(measuredH + 20, 40);
+        const imageHeight = selectedImage ? getPrinterImageSize(selectedImage, 374).height : 0;
+        canvasH = Math.max(imageHeight + (imageHeight && measuredH ? 10 : 0) + measuredH + 20, 40);
         canvasW = 384;
         logW = canvasW; logH = canvasH;
     }
@@ -466,8 +515,15 @@ function createPrintBuffer(textRaw, includeDate) {
     }
 
     if (currentMode === 'printer') {
+        // Images are scaled to the printable width and placed above any accompanying text.
+        let textY = ry + 5;
+        if (selectedImage) {
+            const size = getPrinterImageSize(selectedImage, rw);
+            ctx.drawImage(selectedImage, rx + (rw - size.width) / 2, textY, size.width, size.height);
+            textY += size.height + (primaryText ? 10 : 0);
+        }
         // Left-aligned markdown at h1-equivalent base size (22px), no side margins
-        drawMarkdown(ctx, primaryText || '', rx, ry + 5, rw, rh - 5, 22, true, false);
+        drawMarkdown(ctx, primaryText || '', rx, textY, rw, Math.max(0, ry + rh - textY), 22, true, false);
     } else if (currentMode === 'sticker') {
         // Binary-search base font size so content fills the sticker, then draw left-aligned
         let lo = 8, hi = 60, bestSize = 14;

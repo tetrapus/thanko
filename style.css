@@ -121,6 +121,19 @@ main { display: flex; flex-direction: column; gap: 16px; }
     padding: 12px;
     background: #f8fafc;
 }
+.image-controls {
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+#image-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
+}
 .emoji-wrapper { flex-shrink: 0; width: 50px; }
 
 textarea {
