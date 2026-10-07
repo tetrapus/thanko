@@ -4,7 +4,7 @@ const textArea = document.getElementById('receipt-text');
 const emojiInput = document.getElementById('emoji-input');
 
 // Mode & State
-let currentMode = 'label'; // label, printer, sticker
+let currentMode = 'label'; // label or printer
 let dateOffsetDays = 0;
 let printQuantity = 1;
 
@@ -433,10 +433,6 @@ function createPrintBuffer(textRaw, includeDate) {
         canvasW = 96; canvasH = 320;
         logW = 320; logH = 96;
     }
-    else if (currentMode === 'sticker') {
-        canvasW = 384; canvasH = 384;
-        logW = 384; logH = 384;
-    }
     else {
         // Printer (Variable Height) — markdown at h1-equivalent size, left-aligned, dynamic height
         const PRINTER_FONT = 22; // = 14 * 1.6 (h1 scale factor)
@@ -480,9 +476,6 @@ function createPrintBuffer(textRaw, includeDate) {
         rw = 210; // 21 boxes of printable width (ends cleanly at box 22)
         ry = 10;  // 1 box top margin to counter off-center tape
         rh = 76;  // 96 total height - 20 (top and bottom margin)
-    } else if (currentMode === 'sticker') {
-        rx += 20; rw -= 40;
-        ry += 20; rh -= 40;
     }
 
     // Process Emoji on the left
@@ -524,15 +517,6 @@ function createPrintBuffer(textRaw, includeDate) {
         }
         // Left-aligned markdown at h1-equivalent base size (22px), no side margins
         drawMarkdown(ctx, primaryText || '', rx, textY, rw, Math.max(0, ry + rh - textY), 22, true, false);
-    } else if (currentMode === 'sticker') {
-        // Binary-search base font size so content fills the sticker, then draw left-aligned
-        let lo = 8, hi = 60, bestSize = 14;
-        for (let iter = 0; iter < 10; iter++) {
-            const mid = Math.floor((lo + hi) / 2);
-            const h = drawMarkdown(ctx, primaryText || '', 0, 0, rw, rh * 100, mid, true, true);
-            if (h <= rh) { bestSize = mid; lo = mid + 1; } else { hi = mid - 1; }
-        }
-        drawMarkdown(ctx, primaryText || '', rx, ry, rw, rh, bestSize, true, false);
     } else {
         // Label mode — existing centered drawTextInBounds
         drawTextInBounds(ctx, primaryText, rx, ry, rw, rh);
