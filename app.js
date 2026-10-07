@@ -21,6 +21,35 @@ const imageUploadBtn = document.getElementById('image-upload-btn');
 const imageName = document.getElementById('image-name');
 const imageClearBtn = document.getElementById('image-clear-btn');
 let selectedImage = null;
+const generatorToggle = document.getElementById('generator-toggle');
+const generatorPanel = document.getElementById('generator-panel');
+const imagePrompt = document.getElementById('image-prompt');
+const referenceUpload = document.getElementById('reference-upload');
+const referencePreview = document.getElementById('reference-preview');
+const clearReferencesBtn = document.getElementById('clear-references');
+const templateButtons = document.querySelectorAll('.template-btn');
+const outputDimensions = document.getElementById('output-dimensions');
+const outputAspect = document.getElementById('output-aspect');
+const outputSize = document.getElementById('output-size');
+const apiKeyInput = document.getElementById('api-key');
+const generatorStatus = document.getElementById('generator-status');
+const generateImageBtn = document.getElementById('generate-image');
+const generatedImagePreview = document.getElementById('generated-image-preview');
+const clearGeneratedImageBtn = document.getElementById('clear-generated-image');
+const cameraStartBtn = document.getElementById('camera-start');
+const cameraPhotoBtn = document.getElementById('camera-photo');
+const cameraRecordBtn = document.getElementById('camera-record');
+const cameraStopBtn = document.getElementById('camera-stop');
+const cameraPreview = document.getElementById('camera-preview');
+const GEMINI_MODEL = 'gemini-2.5-flash-image';
+const GEMINI_KEY_STORAGE = 'thanko_gemini_api_key';
+let referenceImages = [];
+let cameraStream = null;
+let cameraRecorder = null;
+let clipSampleTimer = null;
+let clipStopTimer = null;
+let clipFrames = [];
+let generatedImageUrl = null;
 
 const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
 const WRITE_CHAR_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
@@ -89,6 +118,7 @@ modeBtns.forEach(btn => {
         document.getElementById('label-controls').style.display = isLabel ? 'flex' : 'none';
         document.getElementById('label-emoji').style.display = isLabel ? 'block' : 'none';
         imageControls.style.display = currentMode === 'printer' ? 'flex' : 'none';
+        outputDimensions.hidden = currentMode !== 'printer';
     });
 });
 
@@ -104,6 +134,7 @@ imageUploadBtn.addEventListener('click', () => imageUpload.click());
 imageUpload.addEventListener('change', () => {
     const file = imageUpload.files && imageUpload.files[0];
     if (!file) return;
+    imageUpload.value = '';
     if (!file.type.startsWith('image/')) {
         imageUpload.value = '';
         imageName.textContent = 'Please choose an image file';
@@ -114,6 +145,12 @@ imageUpload.addEventListener('change', () => {
         selectedImage = image;
         imageName.textContent = file.name;
         imageClearBtn.style.display = 'inline-block';
+        clearGeneratedImageBtn.hidden = true;
+        generatedImagePreview.hidden = true;
+        if (generatedImageUrl) {
+            URL.revokeObjectURL(generatedImageUrl);
+            generatedImageUrl = null;
+        }
         updatePreview();
         URL.revokeObjectURL(image.src);
     };
@@ -124,12 +161,332 @@ imageUpload.addEventListener('change', () => {
     };
     image.src = URL.createObjectURL(file);
 });
-imageClearBtn.addEventListener('click', () => {
+function clearSelectedArtwork() {
     selectedImage = null;
     imageUpload.value = '';
     imageName.textContent = 'No image selected';
     imageClearBtn.style.display = 'none';
+    generatedImagePreview.hidden = true;
+    clearGeneratedImageBtn.hidden = true;
+    if (generatedImageUrl) {
+        URL.revokeObjectURL(generatedImageUrl);
+        generatedImageUrl = null;
+    }
     updatePreview();
+}
+imageClearBtn.addEventListener('click', clearSelectedArtwork);
+clearGeneratedImageBtn.addEventListener('click', clearSelectedArtwork);
+
+generatorToggle.addEventListener('click', () => {
+    generatorPanel.hidden = !generatorPanel.hidden;
+    generatorToggle.setAttribute('aria-expanded', String(!generatorPanel.hidden));
+});
+
+function renderReferencePreviews() {
+    referencePreview.replaceChildren();
+    for (const reference of referenceImages) {
+        const img = document.createElement('img');
+        img.src = `data:${reference.mimeType};base64,${reference.data}`;
+        img.alt = reference.label;
+        img.title = reference.label;
+        referencePreview.append(img);
+    }
+}
+
+function addReferenceImage(reference) {
+    referenceImages = [...referenceImages.filter(item => item.label !== reference.label), reference].slice(-6);
+    renderReferencePreviews();
+}
+
+clearReferencesBtn.addEventListener('click', () => {
+    referenceImages = [];
+    templateButtons.forEach(button => button.setAttribute('aria-pressed', 'false'));
+    renderReferencePreviews();
+    generatorStatus.textContent = 'Reference images cleared.';
+});
+
+function dataUrlToReference(dataUrl, label) {
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(dataUrl);
+    if (!match) throw new Error('This image format is not supported. Choose PNG, JPEG, or WebP.');
+    return { mimeType: match[1], data: match[2], label };
+}
+
+referenceUpload.addEventListener('change', () => {
+    const file = referenceUpload.files && referenceUpload.files[0];
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        generatorStatus.textContent = 'Choose a PNG, JPEG, or WebP reference image.';
+        referenceUpload.value = '';
+        return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+        generatorStatus.textContent = 'Reference images must be 10 MB or smaller.';
+        referenceUpload.value = '';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const image = new Image();
+            image.onload = () => {
+                const scale = Math.min(1, 1024 / image.width, 1024 / image.height);
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(image.width * scale));
+                canvas.height = Math.max(1, Math.round(image.height * scale));
+                canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+                addReferenceImage(dataUrlToReference(canvas.toDataURL('image/jpeg', 0.85), file.name));
+                generatorStatus.textContent = `Added ${file.name} as a reference.`;
+            };
+            image.onerror = () => { generatorStatus.textContent = 'Could not decode that reference image.'; };
+            image.src = reader.result;
+        } catch (error) {
+            generatorStatus.textContent = error.message;
+        }
+    };
+    reader.onerror = () => { generatorStatus.textContent = 'Could not read that image.'; };
+    reader.readAsDataURL(file);
+});
+
+function captureCameraFrame(label) {
+    const width = cameraPreview.videoWidth;
+    const height = cameraPreview.videoHeight;
+    if (!width || !height) throw new Error('The camera is not ready yet.');
+    const scale = Math.min(1, 1024 / width, 1024 / height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.getContext('2d').drawImage(cameraPreview, 0, 0, canvas.width, canvas.height);
+    return dataUrlToReference(canvas.toDataURL('image/jpeg', 0.88), label);
+}
+
+cameraStartBtn.addEventListener('click', async () => {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+        cameraPreview.srcObject = null;
+        cameraPreview.hidden = true;
+        cameraStartBtn.textContent = 'Open Camera';
+        cameraPhotoBtn.disabled = true;
+        cameraRecordBtn.disabled = true;
+        return;
+    }
+    try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        cameraPreview.srcObject = cameraStream;
+        cameraPreview.hidden = false;
+        await cameraPreview.play();
+        cameraStartBtn.textContent = 'Close Camera';
+        cameraPhotoBtn.disabled = false;
+        cameraRecordBtn.disabled = typeof MediaRecorder === 'undefined';
+        generatorStatus.textContent = 'Camera ready. Take a photo or record a short reference clip.';
+    } catch (error) {
+        generatorStatus.textContent = `Could not open the camera: ${error.message}`;
+    }
+});
+
+cameraPhotoBtn.addEventListener('click', () => {
+    try {
+        addReferenceImage(captureCameraFrame('Camera photo'));
+        generatorStatus.textContent = 'Added the camera photo as a reference.';
+    } catch (error) {
+        generatorStatus.textContent = error.message;
+    }
+});
+
+function stopReferenceClip() {
+    if (clipSampleTimer) clearInterval(clipSampleTimer);
+    if (clipStopTimer) clearTimeout(clipStopTimer);
+    clipSampleTimer = null;
+    clipStopTimer = null;
+    if (cameraRecorder && cameraRecorder.state === 'recording') cameraRecorder.stop();
+    cameraRecorder = null;
+    cameraStopBtn.hidden = true;
+    cameraRecordBtn.hidden = false;
+    cameraPhotoBtn.disabled = false;
+    if (!clipFrames.length) {
+        generatorStatus.textContent = 'No video frames were captured. Try again with the camera in view.';
+        return;
+    }
+    clipFrames.forEach((frame, index) => addReferenceImage({ ...frame, label: `Video frame ${index + 1}` }));
+    generatorStatus.textContent = `Added ${clipFrames.length} keyframes from the video clip as references.`;
+    clipFrames = [];
+}
+
+cameraRecordBtn.addEventListener('click', () => {
+    if (!cameraStream) return;
+    try {
+        cameraRecorder = new MediaRecorder(cameraStream);
+        cameraRecorder.start();
+        clipFrames = [];
+        const capture = () => {
+            if (clipFrames.length < 3) {
+                try { clipFrames.push(captureCameraFrame(`Video frame ${clipFrames.length + 1}`)); } catch (_) { /* wait for the next frame */ }
+            }
+        };
+        capture();
+        clipSampleTimer = setInterval(capture, 1300);
+        clipStopTimer = setTimeout(stopReferenceClip, 4000);
+        cameraStopBtn.hidden = false;
+        cameraRecordBtn.hidden = true;
+        cameraPhotoBtn.disabled = true;
+        generatorStatus.textContent = 'Recording a four-second clip. Three keyframes will be used as references.';
+    } catch (error) {
+        generatorStatus.textContent = `Could not record a clip: ${error.message}`;
+    }
+});
+cameraStopBtn.addEventListener('click', stopReferenceClip);
+window.addEventListener('pagehide', () => {
+    if (cameraStream) cameraStream.getTracks().forEach(track => track.stop());
+    if (clipSampleTimer) clearInterval(clipSampleTimer);
+    if (clipStopTimer) clearTimeout(clipStopTimer);
+    stopKeepalive();
+});
+
+const templateArtwork = {
+    sun: '<svg xmlns="http://www.w3.org/2000/svg" width="384" height="384" viewBox="0 0 384 384"><g fill="none" stroke="#000" stroke-width="18" stroke-linecap="round"><circle cx="192" cy="192" r="70"/><path d="M192 28v48M192 308v48M28 192h48M308 192h48M76 76l34 34M274 274l34 34M308 76l-34 34M110 274l-34 34"/></g></svg>',
+    flower: '<svg xmlns="http://www.w3.org/2000/svg" width="384" height="384" viewBox="0 0 384 384"><g fill="none" stroke="#000" stroke-width="16"><circle cx="192" cy="192" r="38" fill="#000"/><circle cx="192" cy="112" r="42"/><circle cx="264" cy="152" r="42"/><circle cx="264" cy="232" r="42"/><circle cx="192" cy="272" r="42"/><circle cx="120" cy="232" r="42"/><circle cx="120" cy="152" r="42"/><path d="M192 230v112m0-42c-26-26-55-24-70-18m70-14c23-24 48-26 66-22"/></g></svg>',
+    cat: '<svg xmlns="http://www.w3.org/2000/svg" width="384" height="384" viewBox="0 0 384 384"><g fill="none" stroke="#000" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M98 156 82 66l82 52q28-8 56 0l82-52-16 90q28 32 28 76c0 69-53 112-122 112S70 301 70 232q0-44 28-76Z"/><path d="M134 213h2m112 0h2M157 257q35 30 70 0m-35-22v18"/></g></svg>'
+};
+
+templateButtons.forEach(button => button.addEventListener('click', async () => {
+    const svg = templateArtwork[button.dataset.template];
+    if (!svg) return;
+    try {
+        const image = new Image();
+        const source = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+        await new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = reject;
+            image.src = source;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = 384;
+        canvas.height = 384;
+        canvas.getContext('2d').drawImage(image, 0, 0);
+        addReferenceImage(dataUrlToReference(canvas.toDataURL('image/png'), `${button.textContent.trim()} template`));
+        templateButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        generatorStatus.textContent = 'Added the template as a style reference.';
+    } catch (error) {
+        generatorStatus.textContent = 'Could not load that template.';
+    }
+}));
+
+function friendlyGeminiError(response, payload) {
+    const message = payload && payload.error && payload.error.message;
+    if (response.status === 400 || response.status === 401) return 'The API key or request was rejected. Check the key and try again.';
+    if (response.status === 403) return 'Google denied access. Check API key restrictions and enable billing for the Google AI project.';
+    if (response.status === 429) return 'The Google API quota or rate limit was reached. Try again later or check billing and quotas.';
+    return message || `Google API request failed (${response.status}).`;
+}
+
+async function testGeminiAccess() {
+    const key = apiKeyInput.value.trim();
+    if (!key) throw new Error('Enter your Gemini API key first.');
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}?key=${encodeURIComponent(key)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(friendlyGeminiError(response, payload));
+    return payload;
+}
+
+document.getElementById('save-api-key').addEventListener('click', () => {
+    const key = apiKeyInput.value.trim();
+    if (!key) {
+        generatorStatus.textContent = 'Paste a Gemini API key before saving.';
+        return;
+    }
+    try {
+        localStorage.setItem(GEMINI_KEY_STORAGE, key);
+        generatorStatus.textContent = 'Key saved in this browser only.';
+    } catch (error) {
+        generatorStatus.textContent = 'Could not access local storage in this browser.';
+    }
+});
+
+document.getElementById('forget-api-key').addEventListener('click', () => {
+    try {
+        localStorage.removeItem(GEMINI_KEY_STORAGE);
+        apiKeyInput.value = '';
+        generatorStatus.textContent = 'Saved key removed from this browser.';
+    } catch (error) {
+        generatorStatus.textContent = 'Could not access local storage in this browser.';
+    }
+});
+
+document.getElementById('test-api-key').addEventListener('click', async () => {
+    generatorStatus.textContent = 'Checking access to the Gemini image model…';
+    try {
+        await testGeminiAccess();
+        generatorStatus.textContent = 'Gemini image model is available for this key.';
+    } catch (error) {
+        generatorStatus.textContent = error.message;
+    }
+});
+
+try { apiKeyInput.value = localStorage.getItem(GEMINI_KEY_STORAGE) || ''; } catch (_) { /* storage is optional */ }
+
+generateImageBtn.addEventListener('click', async () => {
+    const prompt = imagePrompt.value.trim();
+    if (!prompt) {
+        generatorStatus.textContent = 'Describe the image you want first.';
+        imagePrompt.focus();
+        return;
+    }
+    const key = apiKeyInput.value.trim();
+    if (!key) {
+        generatorStatus.textContent = 'Add a Gemini API key in the settings below to generate artwork.';
+        document.querySelector('.api-key-settings').open = true;
+        apiKeyInput.focus();
+        return;
+    }
+
+    const targetMode = currentMode;
+    const thermalInstruction = `Create one family-friendly image for a direct thermal printer. Target output mode: ${targetMode}. Use bold black line art and solid black shapes on a pure white background. Maximize contrast. Avoid grayscale shading, gradients, textures, tiny details, borders, watermarks, and all text or lettering. Keep the subject centered with generous white margins. ${targetMode === 'label' ? 'Compose for a narrow horizontal label; keep the subject simple and wide.' : 'Compose to fit the selected output aspect ratio.'} Treat reference images only as visual guidance; do not copy any text in them.`;
+    const parts = [{ text: prompt }, ...referenceImages.map(reference => ({ inlineData: { mimeType: reference.mimeType, data: reference.data } }))];
+    const requestBody = {
+        systemInstruction: { parts: [{ text: thermalInstruction }] },
+        contents: [{ role: 'user', parts }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+    };
+    if (targetMode === 'printer') {
+        requestBody.generationConfig.imageConfig = { aspectRatio: outputAspect.value, imageSize: outputSize.value };
+    }
+
+    generateImageBtn.disabled = true;
+    generatorStatus.textContent = 'Generating artwork with Gemini…';
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(friendlyGeminiError(response, payload));
+        const responseParts = (payload.candidates || []).flatMap(candidate => candidate.content?.parts || []);
+        const imagePart = responseParts.find(part => part.inlineData || part.inline_data);
+        if (!imagePart) throw new Error('Gemini returned no image. Try a clearer prompt or a different reference image.');
+        const imageData = imagePart.inlineData || imagePart.inline_data;
+        const mimeType = imageData.mimeType || imageData.mime_type || 'image/png';
+        if (generatedImageUrl) URL.revokeObjectURL(generatedImageUrl);
+        generatedImageUrl = URL.createObjectURL(new Blob([Uint8Array.from(atob(imageData.data), char => char.charCodeAt(0))], { type: mimeType }));
+        await new Promise((resolve, reject) => {
+            generatedImagePreview.onload = resolve;
+            generatedImagePreview.onerror = reject;
+            generatedImagePreview.src = generatedImageUrl;
+        });
+        generatedImagePreview.hidden = false;
+        selectedImage = generatedImagePreview;
+        imageName.textContent = 'Generated artwork';
+        imageClearBtn.style.display = 'inline-block';
+        clearGeneratedImageBtn.hidden = false;
+        updatePreview();
+        generatorStatus.textContent = `Artwork generated for ${targetMode} mode and loaded into the print preview.`;
+    } catch (error) {
+        generatorStatus.textContent = error instanceof TypeError
+            ? 'Could not reach Google. Check your connection, API key restrictions, and browser network access.'
+            : error.message;
+    } finally {
+        generateImageBtn.disabled = false;
+    }
 });
 
 const emojiBtn = document.getElementById('emoji-trigger-btn');
@@ -551,6 +908,12 @@ function createPrintBuffer(textRaw, includeDate) {
         drawMarkdown(ctx, primaryText || '', rx, textY, rw, Math.max(0, ry + rh - textY), 22, true, false);
     } else {
         // Label mode — existing centered drawTextInBounds
+        if (selectedImage) {
+            const scale = Math.min(rw / selectedImage.width, rh / selectedImage.height);
+            const imageW = Math.max(1, Math.round(selectedImage.width * scale));
+            const imageH = Math.max(1, Math.round(selectedImage.height * scale));
+            ctx.drawImage(selectedImage, rx + (rw - imageW) / 2, ry + (rh - imageH) / 2, imageW, imageH);
+        }
         drawTextInBounds(ctx, primaryText, rx, ry, rw, rh);
     }
     ctx.restore();
