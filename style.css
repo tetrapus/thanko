@@ -134,6 +134,40 @@ main { display: flex; flex-direction: column; gap: 16px; }
     font-size: 12px;
     font-weight: 600;
 }
+.image-generator { display: flex; flex-direction: column; gap: 10px; }
+.generator-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 2px solid #000;
+    background: #f8fafc;
+}
+[hidden], .generator-panel[hidden], #output-dimensions[hidden] { display: none !important; }
+.generator-panel label, .template-row > span { font-size: 12px; font-weight: 700; }
+.generator-panel textarea, .generator-panel input[type="password"], .generator-panel select {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px;
+    border: 2px solid #000;
+    background: #fff;
+    color: #000;
+}
+.generator-panel textarea { resize: vertical; }
+.generator-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.template-btn { border: 1px solid #000; background: #fff; padding: 7px 9px; cursor: pointer; }
+.template-btn[aria-pressed="true"] { background: #000; color: #fff; }
+.template-btn { display: grid; justify-items: center; gap: 4px; min-width: 72px; font-size: 11px; font-weight: 700; }
+.template-btn svg { width: 52px; height: 52px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.reference-preview { display: flex; gap: 8px; flex-wrap: wrap; }
+.reference-preview img { width: 56px; height: 56px; object-fit: cover; border: 1px solid #000; }
+#camera-preview { width: min(100%, 320px); border: 1px solid #000; }
+#generator-status { font-size: 12px; font-weight: 600; }
+#generated-image-preview { display: block; max-width: 100%; max-height: 240px; object-fit: contain; border: 1px solid #000; background: #fff; }
+#generated-image-preview[hidden] { display: none !important; }
+.api-key-settings { border-top: 1px dashed #000; padding-top: 10px; }
+.api-key-settings summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+.api-key-settings p { margin: 8px 0; font-size: 11px; line-height: 1.4; }
 .emoji-wrapper { flex-shrink: 0; width: 50px; }
 
 textarea {
