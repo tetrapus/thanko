@@ -283,6 +283,7 @@ let selectedImage = null;
 const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
 const WRITE_CHAR_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3";
 const PRINTER_IMAGE_MAX_HEIGHT = 2000;
+const KEEPALIVE_INTERVAL_MS = 20_000;
 
 function getPrinterImageSize(image, maxWidth) {
     const scale = Math.min(1, maxWidth / image.width, PRINTER_IMAGE_MAX_HEIGHT / image.height);
@@ -294,6 +295,35 @@ function getPrinterImageSize(image, maxWidth) {
 
 let bluetoothDevice = null;
 let writeCharacteristic = null;
+let keepaliveTimer = null;
+let isPrinting = false;
+
+function stopKeepalive() {
+    if (keepaliveTimer !== null) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+    }
+}
+
+function startKeepalive() {
+    stopKeepalive();
+    keepaliveTimer = setInterval(async () => {
+        const characteristic = writeCharacteristic;
+        if (!characteristic || isPrinting) return;
+
+        // Query printer status without producing printed output. The label
+        // printer uses this device ID query during setup as well.
+        const command = currentMode === 'label'
+            ? new Uint8Array([0x1d, 0x49, 0xf0, 0x50])
+            : new Uint8Array([0x10, 0x04, 0x01]);
+        try {
+            await characteristic.writeValue(command);
+        } catch (err) {
+            console.warn('Printer keepalive failed', err);
+            onDisconnected();
+        }
+    }, KEEPALIVE_INTERVAL_MS);
+}
 
 // Initialization & Events
 updateDateText();
@@ -506,6 +536,7 @@ async function connectToPrinter() {
             await writeCharacteristic.writeValue(new Uint8Array([0x1b, 0x40])); // Standard ESC @
         }
         await new Promise(r => setTimeout(r, 100));
+        startKeepalive();
         return true;
     } catch (err) {
         console.error(err);
@@ -517,6 +548,7 @@ async function connectToPrinter() {
 }
 
 function onDisconnected() {
+    stopKeepalive();
     statusInd.textContent = 'Disconnected';
     statusInd.className = 'status-disconnected';
     writeCharacteristic = null;
@@ -843,6 +875,7 @@ async function printText(text, includeDate) {
 
     connectBtn.disabled = true;
     connectBtn.querySelector('.btn-text').textContent = 'Printing...';
+    isPrinting = true;
     try {
         const printData = createPrintBuffer(text, includeDate);
 
@@ -858,6 +891,7 @@ async function printText(text, includeDate) {
         console.error(err);
         onDisconnected();
     } finally {
+        isPrinting = false;
         connectBtn.disabled = false;
         connectBtn.querySelector('.btn-text').textContent = 'Connect & Print';
     }
